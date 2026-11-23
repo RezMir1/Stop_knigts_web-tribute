@@ -13,6 +13,44 @@ SOURCE = WEB.parent / "Stop Knights.app"
 ASSETS = WEB / "assets"
 
 
+def write_data(filename, global_name, data):
+    (ASSETS / filename).write_text(
+        "globalThis." + global_name + " = " + json.dumps(data, separators=(",", ":")) + ";\n",
+        encoding="utf-8",
+    )
+
+
+def write_web_images(atlases, first_level):
+    from PIL import Image
+
+    first_frames = {
+        "units": lambda key: key.startswith(("knight_", "skeleton_", "crystalball")),
+        "ui": lambda key: key.startswith(("mana_", "countdown_", "notification_", "endlevel_"))
+            or key in ("icon_skeleton.png", "icon_lock.png", "dragicon_skeleton.png", "drag_cross.png"),
+        "environment": lambda key: key in ("environment_sky.jpg", "environment_moon.png",
+                                           "environment_cloud.png", "environment_cloud2.png"),
+    }
+    for name in ("castle_tiles", "environment", "units", "ui"):
+        source = Image.open(ASSETS / f"{name}.png").convert("RGBA")
+        if name != "environment":
+            source.save(ASSETS / f"{name}.webp", lossless=True, method=6)
+        initial = Image.new("RGBA", source.size)
+        if name == "castle_tiles":
+            columns = source.width // 20
+            used = {115}
+            for layer in first_level["layers"].values():
+                used.update((gid & 0x0fffffff) for gid in layer if gid)
+            boxes = [((gid - 1) % columns * 20, (gid - 1) // columns * 20, 20, 20) for gid in used]
+        else:
+            boxes = [
+                tuple(frame[k] for k in ("x", "y", "width", "height"))
+                for key, frame in atlases[name].items() if first_frames[name](key)
+            ]
+        for x, y, w, h in boxes:
+            initial.paste(source.crop((x, y, x + w, y + h)), (x, y))
+        initial.save(ASSETS / f"{name}-first.webp", lossless=True, method=6)
+
+
 def png_chunk(kind, data):
     return (struct.pack(">I", len(data)) + kind + data
             + struct.pack(">I", zlib.crc32(kind + data)))
@@ -112,10 +150,10 @@ def main():
                     for name in ("units", "ui", "environment")},
         "levels": [read_level(number) for number in range(1, 21)],
     }
-    (ASSETS / "game-data.js").write_text(
-        "globalThis.STOP_KNIGHTS_DATA = " + json.dumps(data, separators=(",", ":")) + ";\n",
-        encoding="utf-8",
-    )
+    write_web_images(data["atlases"], data["levels"][0])
+    later_maps = [level.pop("layers") for level in data["levels"][1:]]
+    write_data("campaign-maps.js", "STOP_KNIGHTS_CAMPAIGN_MAPS", later_maps)
+    write_data("game-data.js", "STOP_KNIGHTS_DATA", data)
 
 
 if __name__ == "__main__":

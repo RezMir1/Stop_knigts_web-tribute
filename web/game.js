@@ -35,6 +35,11 @@ const manaCtx = manaVessel.getContext("2d");
 const tile = 20;
 const view = { width: 480, height: 320 };
 const images = {};
+let campaignLoading;
+let campaignReady = false;
+let levelRequest = 0;
+let loadingLevel = false;
+let levelLoadError = "";
 const clamp = (n, low, high) => Math.min(Math.max(n, low), high);
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const unitScale = .75;
@@ -408,7 +413,80 @@ function findEntrance(source) {
     Math.abs(door.y - height) < Math.abs(best.y - height) ? door : best);
 }
 
+function loadImage(name, filename) {
+  const image = new Image();
+  image.src = "assets/" + filename;
+  return image.decode().then(() => [name, image]);
+}
+
+function loadCampaignMaps() {
+  const cached = globalThis.STOP_KNIGHTS_CAMPAIGN_MAPS;
+  if (cached?.length === originalLevels.length - 1) return Promise.resolve(cached);
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "assets/campaign-maps.js";
+    script.onload = () => {
+      script.remove();
+      const maps = globalThis.STOP_KNIGHTS_CAMPAIGN_MAPS;
+      if (maps?.length === originalLevels.length - 1) resolve(maps);
+      else reject(new Error("Файл остальных карт неполный."));
+    };
+    script.onerror = () => {
+      script.remove();
+      reject(new Error("Не удалось загрузить карты кампании."));
+    };
+    document.head.append(script);
+  });
+}
+
+function loadCampaign() {
+  campaignLoading ??= Promise.all([
+    loadCampaignMaps(),
+    Promise.all(["castle_tiles", "units", "ui"].map((name) => loadImage(name, name + ".webp"))),
+  ]).then(([maps, atlasImages]) => {
+    maps.forEach((layers, index) => { originalLevels[index + 1].layers = layers; });
+    Object.assign(images, Object.fromEntries(atlasImages));
+    campaignReady = true;
+  }).catch((error) => {
+    campaignLoading = null;
+    throw error;
+  });
+  return campaignLoading;
+}
+
+function needsCampaign(number) {
+  const options = balance.levels[number - 1];
+  return number !== 1 || options.dracula >= 0 ||
+    options.minions.some((type) => type !== "Skeleton") ||
+    Object.entries(options.startingMinions).some(([type, count]) => type !== "Skeleton" && count > 0) ||
+    options.waves.some((wave) => wave.groups.some((group) => group.type !== "knight"));
+}
+
 function init(number) {
+  const request = ++levelRequest;
+  levelLoadError = "";
+  if (campaignReady || !needsCampaign(number)) {
+    loadingLevel = false;
+    return initLoadedLevel(number);
+  }
+  loadingLevel = true;
+  $("status").textContent = "Загрузка уровня…";
+  return loadCampaign().then(() => {
+    if (request !== levelRequest) return;
+    loadingLevel = false;
+    initLoadedLevel(number);
+  }).catch((error) => {
+    if (request !== levelRequest) return;
+    loadingLevel = false;
+    if (game) {
+      levelLoadError = "Не удалось загрузить уровень. Попробуй выбрать его ещё раз.";
+      $("level").value = String(game.number);
+      console.error(error);
+    } else throw error;
+  });
+}
+
+function initLoadedLevel(number) {
   saveProgress("level", String(number));
   const options = balance.levels[number - 1];
   const rules = {
@@ -739,7 +817,7 @@ function updateAlly(ally, dt) {
 }
 
 function update(dt) {
-  if (game.paused || game.result || game.intro || game.tutorial || location.hash === "#settings" ||
+  if (loadingLevel || game.paused || game.result || game.intro || game.tutorial || location.hash === "#settings" ||
       location.hash === "#maps") return;
   if (draculaSpawning()) {
     game.dracula.spawnTime = Math.min(9 / draculaSpawnFps, game.dracula.spawnTime + dt);
@@ -1144,7 +1222,7 @@ function buildMinions() {
     const dimension = Math.max(frame.width, frame.height);
     const size = (pixels) => `calc(var(--minion-icon-size) * ${pixels / dimension})`;
     Object.assign(image.style, {
-      backgroundImage: "url('assets/ui.png')",
+      backgroundImage: "url('" + images.ui.src + "')",
       backgroundPosition: `${size(-frame.x)} ${size(-frame.y)}`,
       backgroundSize: `${size(images.ui.width)} ${size(images.ui.height)}`,
       width: size(frame.width),
@@ -1191,7 +1269,7 @@ function localPoint(event) {
 }
 
 function placementSpot(type, point) {
-  if (game.paused || game.result || game.intro || draculaSpawning() || !type) return null;
+  if (loadingLevel || game.paused || game.result || game.intro || draculaSpawning() || !type) return null;
   if (!game.map.minions.includes(type) || game.mana < balance.defenders[type].cost) return null;
   if (game.tutorial && game.tutorial !== "summon") return null;
   if (point.x < 0 || point.x >= view.width || point.y < 0 || point.y >= view.height) return null;
@@ -1426,7 +1504,8 @@ function refreshControls() {
     timer: game.result || game.tutorial ? "—" : Number.isFinite(game.nextWave)
       ? Math.max(0, Math.ceil(game.nextWave - game.time)) + " с"
       : game.enemies.length + game.queue.length,
-    status: { victory: "Победа", defeat: "Поражение", forfeit: "Попытка завершена" }[game.result] ?? "",
+    status: loadingLevel ? "Загрузка уровня…" : levelLoadError ||
+      ({ victory: "Победа", defeat: "Поражение", forfeit: "Попытка завершена" }[game.result] ?? ""),
   };
   $("timer-label").textContent = Number.isFinite(game.nextWave) ? "До волны" : "Осталось врагов";
   $("find-enemy").hidden = Boolean(game.result || Number.isFinite(game.nextWave));
@@ -1443,17 +1522,7 @@ function refreshControls() {
   }
 }
 
-async function start() {
-  await Promise.all(["castle_tiles", "environment", "units", "ui"].map(async (name) => {
-    const img = new Image();
-    img.src = "assets/" + name + ".png";
-    await img.decode();
-    images[name] = img;
-  }));
-  fillLevelSelect($("level"), levels);
-  resizeView();
-  const savedLevel = Number(readProgress("level"));
-  init(Number.isInteger(savedLevel) && savedLevel >= 1 && savedLevel <= levels.length ? savedLevel : 1);
+function setupEditors() {
   let pendingMap = null;
   const mapEditor = setupMapEditor({
     originals: originalLevels, maps: customLevels, texture: images.castle_tiles,
@@ -1490,6 +1559,37 @@ async function start() {
       init(number);
     },
   });
+}
+
+async function start() {
+  const savedLevel = Number(readProgress("level"));
+  const initialLevel = Number.isInteger(savedLevel) && savedLevel >= 1 && savedLevel <= levels.length ? savedLevel : 1;
+  const useFullAssets = needsCampaign(initialLevel);
+  const initialImages = useFullAssets ? ["environment"] : ["castle_tiles", "environment", "units", "ui"];
+  const first = Promise.all(initialImages.map((name) => loadImage(name, name + "-first.webp")));
+  if (useFullAssets) await Promise.all([first, loadCampaign()]);
+  Object.assign(images, Object.fromEntries(await first));
+
+  fillLevelSelect($("level"), levels);
+  resizeView();
+  initLoadedLevel(initialLevel);
+
+  let editorsReady = false;
+  async function openEditor() {
+    if (editorsReady || !["#settings", "#maps"].includes(location.hash)) return;
+    $("status").textContent = "Загрузка редактора…";
+    try {
+      await loadCampaign();
+      if (editorsReady || !["#settings", "#maps"].includes(location.hash)) return;
+      setupEditors();
+      editorsReady = true;
+    } catch (error) {
+      $("status").textContent = error.message;
+    }
+  }
+  window.addEventListener("hashchange", openEditor);
+  void openEditor();
+
   let previous = performance.now();
   function tick(now) {
     update(Math.min((now - previous) / 1000, .06));
@@ -1502,6 +1602,9 @@ async function start() {
     requestAnimationFrame(tick);
   }
   requestAnimationFrame(tick);
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    void loadCampaign().catch((error) => console.warn("Фоновая загрузка кампании:", error));
+  }));
 }
 
 start().catch((error) => {
