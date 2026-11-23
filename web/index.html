@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stop Knights</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="assets/game-data.js"></script>
+  <script defer src="settings.js"></script>
+  <script defer src="maps.js"></script>
+  <script defer src="game.js"></script>
+</head>
+<body>
+<main id="game-page">
+  <header>
+    <a class="settings-link" href="#settings">Настройки</a>
+    <a class="settings-link" href="#maps">Редактор карт</a>
+    <label>Уровень <select id="level"></select></label>
+    <button id="restart" type="button">Заново</button>
+    <button id="fullscreen" type="button">На весь экран</button>
+    <button id="pause" type="button" aria-label="Пауза" title="Пауза">
+      <img src="assets/pause-button.png" width="37" height="38" alt="">
+    </button>
+  </header>
+  <canvas id="castle" width="900" height="600" aria-label="Карта замка"></canvas>
+  <canvas id="summon-preview" width="72" height="72" aria-hidden="true" hidden></canvas>
+  <div class="controls">
+    <div class="stats">
+      <div class="mana-stat">
+        <canvas id="mana-vessel" width="78" height="68" aria-hidden="true"></canvas>
+        <output id="mana" aria-label="Мана">—</output>
+        <img id="tutorial-mana" class="tutorial-hint" src="assets/tutorial/tutorial_mana.png"
+             alt="Mana is used to summon minions." hidden>
+      </div>
+      <div class="stat crystal-stat" title="Защищайте кристаллы. Если рыцари уничтожат все, уровень проигран.">
+        <img src="assets/crystal-hud.png" width="29" height="29" alt="">
+        <output id="crystals" aria-label="Суммарное здоровье кристаллов">—</output>
+      </div>
+      <div class="stat"><span>Волна</span><output id="wave">—</output></div>
+      <div class="stat"><span id="timer-label">До волны</span><output id="timer">—</output></div>
+      <button id="find-enemy" type="button" hidden>Найти врага</button>
+    </div>
+    <div class="minion-controls">
+      <div id="minions" aria-label="Покупка миньонов"></div>
+      <img id="tutorial-drag" class="tutorial-hint" src="assets/tutorial/tutorial_drag.png"
+           alt="Drag the skeleton into the castle." hidden>
+    </div>
+    <output id="status" role="status">Загрузка…</output>
+    <button id="next" type="button" hidden>Следующий уровень</button>
+  </div>
+  <p id="help">Перетащите миньона в замок или выберите его и нажмите на этаж. Защищайте кристаллы. Синие духи временно дают дополнительную ману. Esc, P или пробел — пауза.</p>
+  <section id="pause-menu" aria-label="Меню паузы" hidden>
+    <button id="resume" type="button" aria-label="Продолжить">
+      <img src="assets/pause/pausemenu_resume.png" width="250" height="52" alt="">
+      <img class="pause-pressed" src="assets/pause/pausemenu_resumepressed.png" width="250" height="52" alt="">
+    </button>
+    <button id="pause-restart" type="button" aria-label="Начать уровень заново">
+      <img src="assets/pause/pausemenu_restart.png" width="162" height="52" alt="">
+      <img class="pause-pressed" src="assets/pause/pausemenu_restartpressed.png" width="162" height="52" alt="">
+    </button>
+    <button id="pause-forfeit" type="button" aria-label="Сдаться">
+      <img src="assets/pause/pausemenu_quit.png" width="197" height="52" alt="">
+      <img class="pause-pressed" src="assets/pause/pausemenu_quitpressed.png" width="197" height="52" alt="">
+    </button>
+  </section>
+  <section id="dracula-intro" aria-label="Дракула вступает в бой" hidden>
+    <button id="dracula-intro-continue" type="button" aria-label="Дракула вступит в бой и не может погибнуть. Продолжить">
+      <img src="assets/dracula-intro.png" alt="Карточка Дракулы">
+    </button>
+  </section>
+  <section id="level-tutorial" aria-label="Обучение" hidden>
+    <button id="tutorial-continue" type="button">
+      <img id="tutorial-guide" src="assets/tutorial/tutorial_guide1.png" alt="Dracula guide: protect the crystal. Touch to continue.">
+    </button>
+  </section>
+  <img id="tutorial-camera" class="tutorial-hint" src="assets/tutorial/tutorial_camera.png"
+       alt="Touch and drag the screen to look around." hidden>
+</main>
+<main id="settings-page" hidden>
+  <form id="balance-form">
+    <div class="settings-heading">
+      <h1>Настройки баланса</h1>
+      <a id="balance-back" class="settings-link" href="#">Назад в игру</a>
+    </div>
+    <p>Изменения применяются после сохранения. Выбранный в редакторе уровень запустится заново.</p>
+    <details>
+      <summary>Мана, кристаллы и способности</summary>
+      <div id="balance-rules"></div>
+    </details>
+    <details>
+      <summary>Характеристики всех персонажей</summary>
+      <div id="balance-units"></div>
+    </details>
+    <section aria-labelledby="balance-level-title">
+      <div class="settings-heading">
+        <h2 id="balance-level-title">Настройки уровня</h2>
+        <div class="balance-level-picker"><label>Уровень <select id="balance-level"></select></label></div>
+      </div>
+      <div id="balance-level-fields" class="balance-fields"></div>
+      <details>
+        <summary>Доступные и стартовые миньоны</summary>
+        <div id="balance-minions" class="balance-fields"></div>
+      </details>
+      <h3>Волны</h3>
+      <p>Задержка считается от начала предыдущей волны. Для первой волны она считается от начала уровня. Пустые характеристики группы берутся из общих настроек.</p>
+      <div id="balance-waves"></div>
+      <div class="balance-actions">
+        <button id="balance-add-wave" type="button">Добавить волну</button>
+        <button id="balance-example" type="button">Пример с красными рыцарями</button>
+        <button id="balance-reset-level" type="button">Сбросить уровень</button>
+        <button id="balance-delete-level" type="button" hidden>Удалить карту</button>
+      </div>
+    </section>
+    <div class="balance-actions settings-footer">
+      <button type="submit">Сохранить и запустить</button>
+      <button id="balance-reset-all" type="button">Вернуть исходный баланс</button>
+      <output id="balance-status" role="status"></output>
+    </div>
+  </form>
+</main>
+<main id="map-page" hidden>
+  <div class="map-workspace">
+    <div class="settings-heading">
+      <h1>Редактор карт</h1>
+      <a class="settings-link" href="#">Назад в игру</a>
+    </div>
+    <div class="map-toolbar">
+      <label>Мои карты <select id="map-select"></select></label>
+      <label>Название <input id="map-name" maxlength="60"></label>
+      <label>Ширина <input id="map-width" type="number" min="12" max="100" step="1"></label>
+      <label>Высота <input id="map-height" type="number" min="10" max="160" step="1"></label>
+      <button id="map-resize" type="button">Изменить размер</button>
+      <button id="map-grow" type="button">+10 рядов сверху</button>
+      <label>Масштаб <select id="map-zoom"><option value=".5">50%</option><option value=".75">75%</option><option value="1" selected>100%</option><option value="1.5">150%</option></select></label>
+      <button id="map-blank" type="button">Пустая карта</button>
+      <button id="map-undo" type="button" title="Ctrl+Z">Отменить действие</button>
+      <button id="map-delete-block" type="button" aria-pressed="false">Удалить блок</button>
+    </div>
+    <div class="map-layout">
+      <aside class="map-tools">
+        <h2>Блоки замка</h2>
+        <div id="map-blocks" aria-label="Готовые блоки замка"></div>
+        <details class="map-tiles">
+          <summary>Отдельные тайлы и инструменты</summary>
+          <label>Слой <select id="map-layer"></select></label>
+          <label>Инструмент <select id="map-tool"></select></label>
+          <canvas id="map-palette" aria-label="Палитра оригинальных тайлов"></canvas>
+          <output id="map-tile"></output>
+        </details>
+        <h2>Точки появления</h2>
+        <div id="map-spawners"></div>
+      </aside>
+      <div id="map-scroll" class="map-canvas-wrap" tabindex="0" aria-label="Прокрутка карты">
+        <div class="map-board">
+          <canvas id="map-canvas" aria-label="Карта замка для редактирования"></canvas>
+          <canvas id="map-preview" aria-hidden="true"></canvas>
+        </div>
+      </div>
+    </div>
+    <p>Для крыши укажи верх комнаты. У балкона голубая линия отмечает пол этажа, золотая — стык со стеной. Жёлтые клетки показывают наложение. Правый клик удаляет поставленный блок, Ctrl+Z отменяет последнее действие.</p>
+    <div class="balance-actions">
+      <button id="map-save" type="button">Сохранить карту</button>
+      <button id="map-balance" type="button">Настроить волны</button>
+      <button id="map-play" type="button">Сохранить и запустить</button>
+      <output id="map-status" role="status"></output>
+    </div>
+  </div>
+</main>
+</body>
+</html>
